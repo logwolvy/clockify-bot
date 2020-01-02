@@ -7,6 +7,8 @@ require 'yaml'
 
 class ClockifyBot
   def initialize(config = YAML.load(File.read('./config.yml')))
+    raise ArgumentError, 'Expects from_date to be provided' unless ARGV[0]
+
     @from_date = ARGV[0]
     @to_date = ARGV[1] || Time.now.strftime('%F')
     @config = config
