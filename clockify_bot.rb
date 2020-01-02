@@ -33,7 +33,7 @@ class ClockifyBot
     commit_blocks = paths.map do |path|
       author = `git config user.name`
       service_name = path.split('/').last
-      `cd #{path} && git log --no-merges --author=#{author.strip} --pretty="%ad %s in #{service_name}" --date=short --since=#{from_date} --until=#{to_date}`
+      `cd #{path} && git log --branches --no-merges --author=#{author.strip} --pretty="%ad %s in #{service_name}" --date=short --since=#{from_date} --until=#{to_date}`
     end.join("\n")
 
     commit_blocks
