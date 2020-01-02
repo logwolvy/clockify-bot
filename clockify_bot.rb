@@ -3,44 +3,54 @@
 require 'uri'
 require 'net/https'
 require 'json'
+require 'yaml'
 
 class ClockifyBot
-  CLOCKIFY_EMAIL = 'youremail@test.com'
-  CLOCKIFY_PASSWORD = 'yourpassword'
-  PROJECT_NAME = 'projectname' # As it appears in clockify
+  def initialize(config = YAML.load(File.read('./config.yml')))
+    @from_date = ARGV[0]
+    @to_date = ARGV[1] || Time.now.strftime('%F')
+    @config = config
+  end
 
   def run
-    commits.each do |k, v|
-      data = { start_date: "#{k}T03:30:00.000Z", end_date: "#{k}T11:30:00.000Z", description: v }
-      update_clockify(data)
-      sleep(1)
+    config['PROJECTS'].each do |project|
+      @project_id = fetch_project_id(project['name'])
+
+      commits(project['local_paths']).each do |k, v|
+        data = { start_date: "#{k}T03:30:00.000Z", end_date: "#{k}T11:30:00.000Z", description: v }
+        update_clockify(data)
+      end.tap { |c| puts "Commits for #{project['name']} -> #{c} \n\n" if ENV['DEBUG'] }
     end
   end
 
   private
 
-  def commits
-    @commits ||= begin
-      from_date = ARGV[0]
-      to_date = ARGV[1] || Time.now.strftime('%F')
+  attr_reader :config, :from_date, :to_date, :project_id
 
+  def commits(paths)
+    commit_blocks = paths.map do |path|
       author = `git config user.name`
-      commit_blocks = `git log --no-merges --author=#{author.strip} --branches --pretty="%ad %s" --date=short --since=#{from_date} --until=#{to_date}`
-      commit_blocks
-        .split("\n")
-        .map { |c| c.strip.split(' ', 2) }
-        .group_by { |c| c[0] }
-        .transform_values { |v| v.map(&:last).join(', ') }
-    end
+      service_name = path.split('/').last
+      `cd #{path} && git log --no-merges --author=#{author.strip} --pretty="%ad %s in #{service_name}" --date=short --since=#{from_date} --until=#{to_date}`
+    end.join("\n")
+
+    commit_blocks
+      .split("\n")
+      .map { |c| c.strip.split(' ', 2) }
+      .uniq
+      .reject { |c| c.empty? || ignorable_commit?(c[1]) }
+      .group_by { |c| c[0] }
+      .transform_values { |v| v.map(&:last).join(', ') }
   end
 
   def update_clockify(data)
+    sleep 1
     uri = URI("https://global.api.clockify.me/v1/workspaces/#{workspace_id}/user/#{user[:id]}/time-entries")
     body = {
       start: data[:start_date],
       billable: false,
       description: data[:description],
-      projectId: '5d22e3711d234217a94b9652',
+      projectId: project_id,
       taskId: nil,
       end: data[:end_date],
       tagIds: []
@@ -52,8 +62,8 @@ class ClockifyBot
     @user ||= begin
       uri = URI('https://global.api.clockify.me/auth/token')
       body = {
-        email: CLOCKIFY_EMAIL,
-        password: CLOCKIFY_PASSWORD
+        email: config['CLOCKIFY_EMAIL'],
+        password: config['CLOCKIFY_PASSWORD']
       }
       res = post_request(uri, body, true)
       body = JSON.parse(res.body)
@@ -69,12 +79,12 @@ class ClockifyBot
     end
   end
 
-  def project_id
-    @project_id ||= begin
-      uri = URI("https://global.api.clockify.me/workspaces/#{workspace_id}/projects/user/#{user[:id]}/filter?page=1&search=@#{PROJECT_NAME}&include=ONLY_NOT_FAVORITES")
-      res = get_request(uri)
-      JSON.parse(res.body)[0]['id']
-    end
+  def fetch_project_id(project_name)
+    uri = URI("https://global.api.clockify.me/workspaces/#{workspace_id}/projects/user/#{user[:id]}/filter")
+    params = { page: 1, search: "@#{project_name}", include: 'ONLY_NOT_FAVORITES' }
+    uri.query = URI.encode_www_form(params)
+    res = get_request(uri)
+    JSON.parse(res.body)[0]['id']
   end
 
   def get_request(uri)
@@ -82,7 +92,7 @@ class ClockifyBot
     https = Net::HTTP.new(uri.host, uri.port)
     https.use_ssl = true
     req = Net::HTTP::Get.new(
-      uri.path,
+      uri,
       { 'Content-Type': 'application/json' }.tap do |headers|
         headers['x-auth-token'] = user[:token]
       end
@@ -97,7 +107,7 @@ class ClockifyBot
     https = Net::HTTP.new(uri.host, uri.port)
     https.use_ssl = true
     req = Net::HTTP::Post.new(
-      uri.path,
+      uri,
       { 'Content-Type': 'application/json' }.tap do |headers|
         headers['x-auth-token'] = user[:token] unless auth_call
       end
@@ -106,6 +116,10 @@ class ClockifyBot
     https.request(req).tap do |res|
       puts "POST Response ---> #{res.body}\n\n"
     end
+  end
+
+  def ignorable_commit?(commit_msg)
+    %w[Revert Squashed].map { |w| commit_msg.include?(w) }.include?(true)
   end
 end
 

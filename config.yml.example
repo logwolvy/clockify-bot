@@ -1,0 +1,11 @@
+CLOCKIFY_EMAIL: youremail@mail.com
+CLOCKIFY_PASSWORD: yourpassword
+PROJECTS:
+  - name: yourproject # As it appears in clockify
+    local_paths:
+      - /absolute_path_to_your_project_repo_backend_service
+      - /absolute_path_to_your_project_repo_frontend_service
+
+  - name: anotherproject # As it appears in clockify
+    local_paths:
+      - /absolute_path_to_another_project_repo
